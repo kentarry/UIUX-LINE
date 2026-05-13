@@ -89,11 +89,10 @@ def _call_gemini(image: Image.Image, prompt: str, system_instruction: str = "") 
             client = genai.Client(api_key=api_key)
 
             # 組合 generate_content 參數
-            gen_config = None
+            # temperature=0 確保相同圖片產出一致的分析結果（deterministic）
+            gen_config = {"temperature": 0}
             if system_instruction:
-                gen_config = {
-                    "system_instruction": system_instruction
-                }
+                gen_config["system_instruction"] = system_instruction
 
             response = client.models.generate_content(
                 model=config.GEMINI_MODEL,
@@ -224,7 +223,8 @@ def _call_openrouter_fallback(
     payload = {
         "model": config.OPENROUTER_MODEL,
         "messages": messages,
-        "max_tokens": 800
+        "max_tokens": 800,
+        "temperature": 0
     }
 
     resp = requests.post(

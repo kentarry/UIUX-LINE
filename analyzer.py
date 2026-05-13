@@ -294,8 +294,13 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
             lines.append("")
 
         if suggestions:
+            # 排序保障：修正建議在前，✅ 亮點排到最後
+            issues = [s for s in suggestions if "✅ 亮點" not in s]
+            highlights = [s for s in suggestions if "✅ 亮點" in s]
+            sorted_suggestions = issues + highlights
+
             lines.append("💡 建議：")
-            for i, sug in enumerate(suggestions, 1):
+            for i, sug in enumerate(sorted_suggestions, 1):
                 lines.append(f"  {i}. {sug}")
             lines.append("")
         elif observations:

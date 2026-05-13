@@ -17,8 +17,8 @@ _sessions: dict[str, dict] = {}
 _pending_images: dict[str, dict] = {}
 _session_lock = threading.Lock()
 
-# Session 過期時間（秒）— 30 分鐘沒操作就清除
-SESSION_TIMEOUT = 30 * 60
+# Session 過期時間（秒）— 1 分鐘沒操作就清除（避免長時間記憶導致誤判遊戲、節省 Token）
+SESSION_TIMEOUT = 1 * 60
 
 # ── 支援的遊戲清單 ──
 SUPPORTED_GAMES = {

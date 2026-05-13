@@ -1,9 +1,10 @@
 """
 LINE 美術圖審查工具 — AI 分析引擎
-使用多層 AI 策略進行圖片 UX/UI 分析
+支援多遊戲知識庫切換，根據使用者選擇的遊戲載入對應 NotebookLM 知識
 """
 import config
 import ai_client
+import session_manager
 from PIL import Image
 from pathlib import Path
 from datetime import datetime
@@ -12,10 +13,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ── 快取 Skill Prompt 與知識庫（啟動時載入一次，省 token）──
+# ── 快取：按遊戲分別快取知識庫與 system instruction ──
 _skill_prompt_cache = None
-_knowledge_cache = None
-_system_instruction_cache = None
+_game_knowledge_cache: dict[str, str] = {}
+_game_system_instruction_cache: dict[str, str] = {}
 
 
 def _load_skill_prompt() -> str:
@@ -27,69 +28,93 @@ def _load_skill_prompt() -> str:
     return _skill_prompt_cache
 
 
-def _load_knowledge() -> str:
-    """載入並快取設計規範知識庫（精煉版，只載一個檔案）"""
-    global _knowledge_cache
-    if _knowledge_cache is None:
-        parts = []
-
-        # 核心設計規範（必要 — 已整合所有規則）
-        if config.DESIGN_RULES_FILE.exists():
-            parts.append(config.DESIGN_RULES_FILE.read_text(encoding="utf-8"))
-            logger.info("已載入核心設計規範")
-
-        # 專案特定規範（選用 — 只有非空殼時才載入）
-        if config.PROJECT_SPECIFIC_FILE.exists():
-            content = config.PROJECT_SPECIFIC_FILE.read_text(encoding="utf-8")
-            # 跳過空殼模板（檢查是否有實際填入的內容）
-            if "______" not in content and len(content.strip()) > 200:
-                parts.append(content)
-                logger.info("已載入專案特定規範")
-            else:
-                logger.info("專案特定規範為空殼模板，跳過")
-
-        _knowledge_cache = "\n\n".join(parts)
-        logger.info(f"知識庫總計 {len(_knowledge_cache)} 字元")
-    return _knowledge_cache
-
-
-def _build_system_instruction() -> str:
+def _load_game_knowledge(game_name: str) -> str:
     """
-    建構 system instruction，限定 AI 角色與知識邊界
+    載入指定遊戲的知識庫（從 knowledge/ 目錄讀取對應 MD）
 
-    精煉版：只給必要約束，不重複 AI 本來就知道的通用知識
+    Args:
+        game_name: 遊戲名稱（如 "明星3缺1"）
+
+    Returns:
+        知識庫文字內容
     """
-    global _system_instruction_cache
-    if _system_instruction_cache is None:
-        knowledge = _load_knowledge()
+    if game_name in _game_knowledge_cache:
+        return _game_knowledge_cache[game_name]
 
-        _system_instruction_cache = f"""你是遊戲 UX/UI 設計審查專家。
+    parts = []
+
+    # 1. 通用設計規範（所有遊戲共用）
+    if config.DESIGN_RULES_FILE.exists():
+        parts.append(config.DESIGN_RULES_FILE.read_text(encoding="utf-8"))
+        logger.info("已載入通用設計規範")
+
+    # 2. 遊戲專屬知識庫
+    game_info = session_manager.get_game_info(game_name)
+    if game_info:
+        game_kb_file = config.KNOWLEDGE_DIR / game_info["knowledge_file"]
+        if game_kb_file.exists():
+            content = game_kb_file.read_text(encoding="utf-8")
+            parts.append(content)
+            logger.info(f"已載入 {game_name} 專屬知識庫 ({len(content)} 字元)")
+        else:
+            logger.warning(f"遊戲知識庫檔案不存在: {game_kb_file}")
+
+    knowledge = "\n\n".join(parts)
+    _game_knowledge_cache[game_name] = knowledge
+    logger.info(f"{game_name} 知識庫總計 {len(knowledge)} 字元")
+    return knowledge
+
+
+def _build_game_system_instruction(game_name: str) -> str:
+    """
+    建構指定遊戲的 system instruction
+
+    根據使用者選擇的遊戲，載入對應的 NotebookLM 知識庫，
+    限定 AI 角色與知識邊界。
+
+    Args:
+        game_name: 遊戲名稱
+
+    Returns:
+        完整的 system instruction 文字
+    """
+    if game_name in _game_system_instruction_cache:
+        return _game_system_instruction_cache[game_name]
+
+    knowledge = _load_game_knowledge(game_name)
+
+    instruction = f"""你是「{game_name}」遊戲的 UX/UI 設計審查專家。
+
+## 你的身份
+你專精於「{game_name}」這款遊戲的介面設計審查，熟悉該遊戲的視覺風格、品牌規範與設計模式。
 
 ## 審查依據
 根據以下規範審查，每個問題必須引用具體條目：
 {knowledge}
 
 ## 約束
+- 只針對「{game_name}」的設計脈絡進行分析
 - 沒違規就肯定，不硬找問題
 - 繁體中文，300 字以內
+- 不需要評分，直接分析
 """
-        logger.info(
-            f"已建構 system instruction "
-            f"({len(_system_instruction_cache)} 字元)"
-        )
-    return _system_instruction_cache
+
+    _game_system_instruction_cache[game_name] = instruction
+    logger.info(
+        f"已建構 {game_name} system instruction "
+        f"({len(instruction)} 字元)"
+    )
+    return instruction
 
 
 def reload_cache():
-    """強制重新載入 Skill Prompt 與知識庫（更新後使用）"""
-    global _skill_prompt_cache, _knowledge_cache, _system_instruction_cache
+    """強制重新載入所有快取（知識庫更新後使用）"""
+    global _skill_prompt_cache, _game_knowledge_cache, _game_system_instruction_cache
     _skill_prompt_cache = None
-    _knowledge_cache = None
-    _system_instruction_cache = None
+    _game_knowledge_cache = {}
+    _game_system_instruction_cache = {}
     _load_skill_prompt()
-    _load_knowledge()
-    _build_system_instruction()
-    logger.info("已重新載入所有快取")
+    logger.info("已清除所有快取（下次分析時重新載入對應遊戲知識庫）")
 
 
 def compress_image(image_path: Path) -> Image.Image:
@@ -119,9 +144,11 @@ def compress_image(image_path: Path) -> Image.Image:
     return img
 
 
-def analyze_image(image_path: Path, context: str = "") -> dict:
+def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
     """
     使用多層 AI 策略分析圖片的 UX/UI 設計
+
+    根據使用者選擇的遊戲，載入對應知識庫進行分析。
 
     自動處理：
     - Gemini 多 Key 輪替
@@ -130,30 +157,32 @@ def analyze_image(image_path: Path, context: str = "") -> dict:
 
     Args:
         image_path: 圖片路徑
+        game_name: 遊戲名稱（用於載入對應知識庫）
         context: 額外上下文（如美術的留言）
 
     Returns:
         dict: {
             "analysis": 分析結果文字,
             "model": 使用的模型,
+            "game": 遊戲名稱,
             "timestamp": 分析時間,
             "image_path": 圖片路徑
         }
     """
     # 1. 載入本地資源（快取）
     skill_prompt = _load_skill_prompt()
-    system_instruction = _build_system_instruction()
+    system_instruction = _build_game_system_instruction(game_name)
 
     # 2. 壓縮圖片
     img = compress_image(image_path)
 
-    # 3. 組合使用者 Prompt（精簡版 — 知識庫在 system_instruction）
+    # 3. 組合使用者 Prompt
     user_prompt = skill_prompt
 
     if context:
         user_prompt += f"\n---\n## 美術補充說明\n{context}\n"
 
-    user_prompt += "\n請根據系統規範分析這張圖片。"
+    user_prompt += f"\n這是「{game_name}」的介面截圖，請根據系統規範分析這張圖片。"
 
     # 4. 呼叫 AI（透過 ai_client，自動處理輪替、重試與備援）
     analysis_text = ai_client.analyze_with_vision(
@@ -165,6 +194,7 @@ def analyze_image(image_path: Path, context: str = "") -> dict:
     result = {
         "analysis": analysis_text,
         "model": config.GEMINI_MODEL,
+        "game": game_name,
         "timestamp": datetime.now().isoformat(),
         "image_path": str(image_path)
     }
@@ -186,19 +216,24 @@ def _save_log(result: dict):
     logger.info(f"分析日誌已儲存: {log_file}")
 
 
-def format_for_line(analysis: str) -> str:
+def format_for_line(analysis: str, game_name: str = "") -> str:
     """
     將分析結果格式化為 LINE 友善的純文字格式
     去除 Markdown 語法，保留結構
 
     Args:
         analysis: 原始分析文字
+        game_name: 遊戲名稱（加在標頭）
 
     Returns:
         LINE 友善格式的文字
     """
     # 移除 markdown code block 標記
     text = analysis.replace("```", "")
+
+    # 加上遊戲標頭
+    if game_name:
+        text = f"🎮 {game_name} — UI 分析\n{'─' * 20}\n\n{text}"
 
     # 確保不超過 LINE 限制
     if len(text) > 4800:

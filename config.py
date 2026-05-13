@@ -81,6 +81,22 @@ DESIGN_RULES_FILE = KNOWLEDGE_DIR / "design_rules.md"
 # common_issues 和 review_examples 已整合至 design_rules.md
 PROJECT_SPECIFIC_FILE = KNOWLEDGE_DIR / "project_specific.md"
 
+# ── NotebookLM 設定 ──
+# UIUX 設計思維筆記本（通用設計知識，所有遊戲共用）
+NOTEBOOKLM_UIUX_URL = os.getenv(
+    "NOTEBOOKLM_UIUX_URL",
+    "https://notebooklm.google.com/notebook/b11362de-e39b-4189-96e6-e557b854b137?authuser=6"
+)
+# 遊戲專屬筆記本（可擴充）
+NOTEBOOKLM_NOTEBOOKS = {
+    "uiux_design": {
+        "name": "UIUX設計思維",
+        "url": NOTEBOOKLM_UIUX_URL,
+        "target_file": "design_rules.md",
+        "description": "通用 UI/UX 設計審查知識（22 個設計資源來源）",
+    },
+}
+
 
 def validate():
     """驗證必要設定，回傳缺少的項目列表"""

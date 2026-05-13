@@ -231,8 +231,7 @@ def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
     if not parsed:
         logger.warning("AI 回應非 JSON 格式，保留原始文字")
         parsed = {
-            "observation": [analysis_text[:500]],
-            "suggestion": []
+            "suggestion": [analysis_text[:500]]
         }
 
     result = {
@@ -284,14 +283,7 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
 
     if parsed and isinstance(parsed, dict):
         # ── 結構化 JSON 輸出 ──
-        observations = parsed.get("observation", [])
         suggestions = parsed.get("suggestion", [])
-
-        if observations:
-            lines.append("📋 觀察：")
-            for i, obs in enumerate(observations, 1):
-                lines.append(f"  {i}. {obs}")
-            lines.append("")
 
         if suggestions:
             # 排序保障：修正建議在前，✅ 亮點排到最後
@@ -303,8 +295,8 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
             for i, sug in enumerate(sorted_suggestions, 1):
                 lines.append(f"  {i}. {sug}")
             lines.append("")
-        elif observations:
-            # 有觀察但無建議 → 接近完美
+        else:
+            # 無建議 → 接近完美
             lines.append("✅ 設計品質優良，無需額外修改。")
             lines.append("")
 

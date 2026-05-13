@@ -39,8 +39,6 @@ app = Flask(__name__)
 
 # ── 模組載入時初始化（gunicorn 直接 import server:app 時需要）──
 try:
-    cleanup_old_images = None  # 定義在後面，先 forward declare
-
     def _startup_init():
         """伺服器啟動初始化：清理舊圖、預載快取"""
         try:
@@ -349,14 +347,8 @@ def cleanup_old_images():
 
 
 def run(host="0.0.0.0", port=None, debug=False):
-    """啟動伺服器"""
+    """啟動伺服器（初始化已在模組載入時完成）"""
     port = port or config.PORT
-
-    # 啟動時清理舊圖片
-    cleanup_old_images()
-
-    # 預載入快取
-    analyzer.reload_cache()
 
     logger.info(f"伺服器啟動: http://{host}:{port}")
     logger.info(f"Webhook URL: http://{host}:{port}/callback")

@@ -52,49 +52,14 @@ DEFAULT_NOTEBOOK_URL = os.environ.get(
 )
 
 # ── 萃取 Prompt（告訴 NotebookLM 輸出什麼格式）──
-EXTRACT_PROMPTS = {
-    "project_specific": {
-        "file": "project_specific.md",
-        "prompt": """請根據目前上傳的所有資料，幫我整理出一份完整的「專案設計規範」。
-
-輸出格式要求：
-1. 使用 Markdown 格式
-2. 開頭加上 `# 專案特定設計規範`
-3. 分類整理（品牌色彩、字型、間距、按鈕、圖示、特殊規則等）
-4. 每個規則要具體、可量化（例如：「主色 #FF6B00」而非「使用暖色調」）
-5. 只輸出規範內容，不要加前言或結語
-
-請直接輸出 Markdown 內容：""",
-    },
-    "common_issues": {
-        "file": "common_issues.md",
-        "prompt": """請根據目前上傳的所有資料，幫我整理出一份「常見設計審查問題庫」。
-
-輸出格式要求：
-1. 使用 Markdown 格式
-2. 開頭加上 `# 常見審查問題庫`
-3. 每個問題包含：問題描述、影響等級（🔴高/🟡中/🟢低）、標準修正方式
-4. 按照影響等級排序（高→低）
-5. 只根據資料中實際出現過的問題，不要自行補充
-6. 只輸出問題庫內容，不要加前言或結語
-
-請直接輸出 Markdown 內容：""",
-    },
-    "review_examples": {
-        "file": "review_examples.md",
-        "prompt": """請根據目前上傳的所有資料，幫我整理出一份「設計審查範例對照表」。
-
-輸出格式要求：
-1. 使用 Markdown 格式
-2. 開頭加上 `# 審查範例對照`
-3. 分為「✅ 優秀設計範例」和「❌ 需修正範例」兩大區塊
-4. 每個範例包含：描述、為什麼好/為什麼不好、正確做法
-5. 只根據資料中實際出現過的案例，不要自行補充
-6. 只輸出範例內容，不要加前言或結語
-
-請直接輸出 Markdown 內容：""",
-    },
-}
+# 目前分析流程只使用 design_rules.md（已手動維護）和遊戲專屬 .md，
+# 不再自動萃取 project_specific / common_issues / review_examples。
+# 如需新增萃取目標，請按以下格式加入：
+#   "key_name": {
+#       "file": "output_filename.md",
+#       "prompt": "萃取指令文字",
+#   }
+EXTRACT_PROMPTS = {}
 
 
 async def login_google(headed: bool = True):

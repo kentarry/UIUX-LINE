@@ -77,9 +77,7 @@ PORT = int(os.getenv("PORT", 5000))
 UX_REVIEW_SKILL = SKILLS_DIR / "ux_review.md"
 DESIGN_RULES_FILE = KNOWLEDGE_DIR / "design_rules.md"
 
-# ── 擴充知識庫檔案（可選）──
-# common_issues 和 review_examples 已整合至 design_rules.md
-PROJECT_SPECIFIC_FILE = KNOWLEDGE_DIR / "project_specific.md"
+
 
 # ── NotebookLM 設定 ──
 # UIUX 設計思維筆記本（通用設計知識，所有遊戲共用）

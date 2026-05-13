@@ -298,9 +298,9 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
             for i, sug in enumerate(suggestions, 1):
                 lines.append(f"  {i}. {sug}")
             lines.append("")
-        else:
-            # 無建議 → 設計完美，回覆確認訊息避免使用者以為還在讀取
-            lines.append("✅ 審查完成，目前設計沒有需要調整的地方。")
+        elif observations:
+            # 有觀察但無建議 → 接近完美
+            lines.append("✅ 設計品質優良，無需額外修改。")
             lines.append("")
 
     else:

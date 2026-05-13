@@ -7,6 +7,7 @@ import line_client
 import analyzer
 import ai_client
 import session_manager
+import sys
 import hashlib
 import hmac
 import base64
@@ -15,21 +16,53 @@ import threading
 from flask import Flask, request, abort
 from datetime import datetime, timedelta
 
-# ── 日誌設定 ──
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
+# ── 日誌設定（容錯：Render 環境可能無法寫入檔案）──
+_log_handlers = [logging.StreamHandler()]
+try:
+    _log_handlers.append(
         logging.FileHandler(
             config.LOGS_DIR / "server.log",
             encoding="utf-8"
         )
-    ]
+    )
+except (OSError, PermissionError):
+    pass  # Render 環境可能無法寫入，僅用 stdout
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=_log_handlers
 )
 logger = logging.getLogger("server")
 
 app = Flask(__name__)
+
+# ── 模組載入時初始化（gunicorn 直接 import server:app 時需要）──
+try:
+    cleanup_old_images = None  # 定義在後面，先 forward declare
+
+    def _startup_init():
+        """伺服器啟動初始化：清理舊圖、預載快取"""
+        try:
+            # 清理過期圖片
+            threshold = datetime.now() - timedelta(hours=config.IMAGE_RETAIN_HOURS)
+            count = 0
+            for f in config.IMAGES_DIR.glob("*.jpg"):
+                if datetime.fromtimestamp(f.stat().st_mtime) < threshold:
+                    f.unlink()
+                    count += 1
+            if count:
+                logger.info(f"已清理 {count} 張過期圖片")
+        except Exception:
+            pass  # 不阻擋啟動
+
+        # 預載入快取
+        analyzer.reload_cache()
+        logger.info(f"伺服器初始化完成 | model={config.GEMINI_MODEL} | keys={len(config.GOOGLE_API_KEYS)}")
+
+    _startup_init()
+except Exception as e:
+    logger.warning(f"啟動初始化部分失敗（不影響服務）: {e}")
 
 
 def verify_signature(body: bytes, signature: str) -> bool:
@@ -335,9 +368,20 @@ def run(host="0.0.0.0", port=None, debug=False):
     if debug:
         app.run(host=host, port=port, debug=True)
     else:
-        # 正式環境使用 waitress
-        from waitress import serve
-        serve(app, host=host, port=port)
+        # 正式環境：Linux 用 gunicorn，Windows 用 waitress
+        if sys.platform == "win32":
+            from waitress import serve as waitress_serve
+            waitress_serve(app, host=host, port=port)
+        else:
+            import subprocess
+            logger.info(f"以 gunicorn 啟動 (port={port})...")
+            subprocess.run([
+                "gunicorn",
+                "--bind", f"{host}:{port}",
+                "--workers", "1",
+                "--timeout", "120",
+                "server:app"
+            ])
 
 
 if __name__ == "__main__":

@@ -55,8 +55,8 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
     game_name = session_manager.match_game(text)
 
     if game_name:
-        # 設定使用者的遊戲選擇
-        session_manager.set_game(user_id, game_name)
+        # 設定使用者的遊戲選擇與對話內容作為上下文
+        session_manager.set_game(user_id, game_name, context=text)
         logger.info(f"使用者 {user_id[:8]}... 選擇遊戲: {game_name}")
 
         # 檢查是否有暫存的待處理圖片
@@ -78,7 +78,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
             from pathlib import Path
             thread = threading.Thread(
                 target=process_pending_image,
-                args=(pending, game_name, user_id, source_type),
+                args=(pending, game_name, user_id, source_type, text),
                 daemon=True
             )
             thread.start()
@@ -92,7 +92,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
 
     else:
         # 未辨識到遊戲 — 顯示支援清單
-        current_game = session_manager.get_game(user_id)
+        current_game, _ = session_manager.get_game(user_id)
         supported = session_manager.get_supported_games_text()
 
         if current_game:
@@ -112,7 +112,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
         line_client.reply_text(reply_token, reply_msg)
 
 
-def process_pending_image(pending: dict, game_name: str, user_id: str, source_type: str):
+def process_pending_image(pending: dict, game_name: str, user_id: str, source_type: str, context: str = ""):
     """
     處理暫存的待處理圖片（使用者先貼圖、後選遊戲時觸發）
 
@@ -129,7 +129,7 @@ def process_pending_image(pending: dict, game_name: str, user_id: str, source_ty
 
         logger.info(f"開始分析暫存圖片: {image_path.name}, game={game_name}")
 
-        result = analyzer.analyze_image(image_path, game_name=game_name)
+        result = analyzer.analyze_image(image_path, game_name=game_name, context=context)
         formatted = analyzer.format_for_line(result["analysis"], game_name=game_name)
 
         if source_type == "user":
@@ -156,7 +156,7 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
     """
     try:
         # 1. 檢查使用者是否已選擇遊戲
-        game_name = session_manager.get_game(user_id)
+        game_name, context = session_manager.get_game(user_id)
 
         if not game_name:
             # ── 尚未選遊戲：只下載暫存，不呼叫 AI（節省 token）──
@@ -184,7 +184,7 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
         logger.info(f"圖片已下載: {image_path}")
 
         # 3. AI 分析（帶入遊戲知識庫）
-        result = analyzer.analyze_image(image_path, game_name=game_name)
+        result = analyzer.analyze_image(image_path, game_name=game_name, context=context)
         logger.info(f"分析完成: {len(result['analysis'])} 字元")
 
         # 4. 格式化並回覆

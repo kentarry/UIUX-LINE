@@ -60,37 +60,38 @@ def match_game(text: str) -> str | None:
     return None
 
 
-def set_game(user_id: str, game_name: str):
-    """設定使用者當前選擇的遊戲"""
+def set_game(user_id: str, game_name: str, context: str = ""):
+    """設定使用者當前選擇的遊戲與額外上下文"""
     with _session_lock:
         _sessions[user_id] = {
             "game": game_name,
+            "context": context,
             "timestamp": time.time(),
         }
     logger.info(f"使用者 {user_id[:8]}... 選擇遊戲: {game_name}")
 
 
-def get_game(user_id: str) -> str | None:
+def get_game(user_id: str) -> tuple[str | None, str]:
     """
-    取得使用者當前選擇的遊戲
+    取得使用者當前選擇的遊戲與上下文
 
     Returns:
-        遊戲名稱，或 None（未選擇/已過期）
+        (遊戲名稱或 None, 上下文文字)
     """
     with _session_lock:
         session = _sessions.get(user_id)
         if not session:
-            return None
+            return None, ""
 
         # 檢查是否過期
         if time.time() - session["timestamp"] > SESSION_TIMEOUT:
             del _sessions[user_id]
             logger.info(f"使用者 {user_id[:8]}... Session 已過期")
-            return None
+            return None, ""
 
         # 更新活動時間
         session["timestamp"] = time.time()
-        return session["game"]
+        return session["game"], session.get("context", "")
 
 
 def clear_game(user_id: str):

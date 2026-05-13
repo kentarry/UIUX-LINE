@@ -280,7 +280,6 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
     # 標頭
     if game_name:
         lines.append(f"🎮 {game_name} — UI/UX 分析")
-        lines.append("─" * 20)
         lines.append("")
 
     if parsed and isinstance(parsed, dict):

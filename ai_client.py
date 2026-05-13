@@ -224,7 +224,7 @@ def _call_openrouter_fallback(
     payload = {
         "model": config.OPENROUTER_MODEL,
         "messages": messages,
-        "max_tokens": 1500
+        "max_tokens": 800
     }
 
     resp = requests.post(

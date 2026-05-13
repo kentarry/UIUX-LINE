@@ -130,7 +130,7 @@ def process_pending_image(pending: dict, game_name: str, user_id: str, source_ty
         logger.info(f"開始分析暫存圖片: {image_path.name}, game={game_name}")
 
         result = analyzer.analyze_image(image_path, game_name=game_name, context=context)
-        formatted = analyzer.format_for_line(result["analysis"], game_name=game_name)
+        formatted = analyzer.format_for_line(result["analysis"], game_name=game_name, parsed=result.get("parsed"))
 
         if source_type == "user":
             line_client.push_text(user_id, formatted)
@@ -190,7 +190,8 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
         # 4. 格式化並回覆
         formatted = analyzer.format_for_line(
             result["analysis"],
-            game_name=game_name
+            game_name=game_name,
+            parsed=result.get("parsed")
         )
 
         # 嘗試用 reply_token（可能已過期）

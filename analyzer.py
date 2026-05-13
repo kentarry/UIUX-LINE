@@ -1,6 +1,7 @@
 """
 LINE 美術圖審查工具 — AI 分析引擎
 支援多遊戲知識庫切換，根據使用者選擇的遊戲載入對應 NotebookLM 知識
+輸出 JSON 結構化結果，格式化為 LINE 友善文字
 """
 import config
 import ai_client
@@ -32,6 +33,8 @@ def _load_game_knowledge(game_name: str) -> str:
     """
     載入指定遊戲的知識庫（從 knowledge/ 目錄讀取對應 MD）
 
+    只載入遊戲專屬知識庫，不再重複載入通用設計規範（已整合至 system instruction）
+
     Args:
         game_name: 遊戲名稱（如 "明星3缺1"）
 
@@ -43,12 +46,7 @@ def _load_game_knowledge(game_name: str) -> str:
 
     parts = []
 
-    # 1. 通用設計規範（所有遊戲共用）
-    if config.DESIGN_RULES_FILE.exists():
-        parts.append(config.DESIGN_RULES_FILE.read_text(encoding="utf-8"))
-        logger.info("已載入通用設計規範")
-
-    # 2. 遊戲專屬知識庫
+    # 遊戲專屬知識庫
     game_info = session_manager.get_game_info(game_name)
     if game_info:
         game_kb_file = config.KNOWLEDGE_DIR / game_info["knowledge_file"]
@@ -69,8 +67,8 @@ def _build_game_system_instruction(game_name: str) -> str:
     """
     建構指定遊戲的 system instruction
 
-    根據使用者選擇的遊戲，載入對應的 NotebookLM 知識庫，
-    限定 AI 角色與知識邊界。
+    精簡版：只包含遊戲脈絡 + 通用高頻退回原因，
+    不再重複塞入整份 design_rules.md（節省 ~5000 token/次）
 
     Args:
         game_name: 遊戲名稱
@@ -83,20 +81,24 @@ def _build_game_system_instruction(game_name: str) -> str:
 
     knowledge = _load_game_knowledge(game_name)
 
-    instruction = f"""你是「{game_name}」遊戲的 UX/UI 設計審查專家。
+    instruction = f"""你是「{game_name}」遊戲的 UI/UX 審查專家。
 
-## 你的身份
-你專精於「{game_name}」這款遊戲的介面設計審查，熟悉該遊戲的視覺風格、品牌規範與設計模式。
-
-## 審查依據
-根據以下規範審查，每個問題必須引用具體條目：
+## 遊戲脈絡
 {knowledge}
 
-## 約束
-- 只針對「{game_name}」的設計脈絡進行分析
-- 沒違規就肯定，不硬找問題
-- 繁體中文，300 字以內
-- 不需要評分，直接分析
+## 審查核心原則
+- 只指出真正影響使用體驗的問題，不為了改而改
+- 設計接近完美就直接肯定，不硬找問題
+- 每個問題必須引用具體規範或原理作為依據
+- 繁體中文回覆
+
+## 高頻退回判定標準（僅供參考，非必須全檢）
+| 問題 | 判定標準 |
+|------|----------|
+| 按鈕/點擊區太小 | < 44×44px |
+| 文字對比度不足 | < 4.5:1 |
+| 間距不一致 | 同類元素間距差 > 2px |
+| 視覺層級模糊 | 無明確 CTA 或多個等權重元素 |
 """
 
     _game_system_instruction_cache[game_name] = instruction
@@ -144,6 +146,38 @@ def compress_image(image_path: Path) -> Image.Image:
     return img
 
 
+def _parse_json_response(text: str) -> dict | None:
+    """
+    從 AI 回應中解析 JSON
+
+    支援多種格式：
+    - 純 JSON
+    - 包在 ```json ... ``` code block 中
+    - 前後有多餘文字
+
+    Returns:
+        解析後的 dict，或 None（解析失敗）
+    """
+    # 移除 markdown code block
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        # 移除 ```json 和 ```
+        lines = cleaned.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        cleaned = "\n".join(lines).strip()
+
+    # 嘗試找到 JSON 物件
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            return json.loads(cleaned[start:end])
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
 def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
     """
     使用多層 AI 策略分析圖片的 UX/UI 設計
@@ -162,7 +196,8 @@ def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
 
     Returns:
         dict: {
-            "analysis": 分析結果文字,
+            "analysis": 分析結果文字（原始 JSON 字串）,
+            "parsed": 解析後的 dict（含 observation/suggestion）,
             "model": 使用的模型,
             "game": 遊戲名稱,
             "timestamp": 分析時間,
@@ -176,13 +211,13 @@ def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
     # 2. 壓縮圖片
     img = compress_image(image_path)
 
-    # 3. 組合使用者 Prompt
+    # 3. 組合使用者 Prompt（精簡，減少 token）
     user_prompt = skill_prompt
 
     if context:
         user_prompt += f"\n---\n## 美術補充說明\n{context}\n"
 
-    user_prompt += f"\n這是「{game_name}」的介面截圖，請根據系統規範分析這張圖片。"
+    user_prompt += f"\n這是「{game_name}」的介面截圖，請分析並以 JSON 格式回覆。"
 
     # 4. 呼叫 AI（透過 ai_client，自動處理輪替、重試與備援）
     analysis_text = ai_client.analyze_with_vision(
@@ -191,15 +226,25 @@ def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
         system_instruction=system_instruction
     )
 
+    # 5. 嘗試解析 JSON
+    parsed = _parse_json_response(analysis_text)
+    if not parsed:
+        logger.warning("AI 回應非 JSON 格式，保留原始文字")
+        parsed = {
+            "observation": [analysis_text[:500]],
+            "suggestion": []
+        }
+
     result = {
         "analysis": analysis_text,
+        "parsed": parsed,
         "model": config.GEMINI_MODEL,
         "game": game_name,
         "timestamp": datetime.now().isoformat(),
         "image_path": str(image_path)
     }
 
-    # 5. 儲存分析日誌
+    # 6. 儲存分析日誌
     _save_log(result)
 
     return result
@@ -216,27 +261,58 @@ def _save_log(result: dict):
     logger.info(f"分析日誌已儲存: {log_file}")
 
 
-def format_for_line(analysis: str, game_name: str = "") -> str:
+def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> str:
     """
     將分析結果格式化為 LINE 友善的純文字格式
-    去除 Markdown 語法，保留結構
+
+    優先使用 parsed JSON 結構化輸出，否則 fallback 到原始文字
 
     Args:
-        analysis: 原始分析文字
+        analysis: 原始分析文字（fallback 用）
         game_name: 遊戲名稱（加在標頭）
+        parsed: 解析後的 JSON dict（含 observation/suggestion）
 
     Returns:
         LINE 友善格式的文字
     """
-    # 移除 markdown code block 標記
-    text = analysis.replace("```", "")
+    lines = []
 
-    # 加上遊戲標頭
+    # 標頭
     if game_name:
-        text = f"🎮 {game_name} — UI 分析\n{'─' * 20}\n\n{text}"
+        lines.append(f"🎮 {game_name} — UI/UX 分析")
+        lines.append("─" * 20)
+        lines.append("")
+
+    if parsed and isinstance(parsed, dict):
+        # ── 結構化 JSON 輸出 ──
+        observations = parsed.get("observation", [])
+        suggestions = parsed.get("suggestion", [])
+
+        if observations:
+            lines.append("📋 觀察：")
+            for i, obs in enumerate(observations, 1):
+                lines.append(f"  {i}. {obs}")
+            lines.append("")
+
+        if suggestions:
+            lines.append("💡 建議：")
+            for i, sug in enumerate(suggestions, 1):
+                lines.append(f"  {i}. {sug}")
+            lines.append("")
+        elif observations:
+            # 有觀察但無建議 → 接近完美
+            lines.append("✅ 設計品質優良，無需額外修改。")
+            lines.append("")
+
+    else:
+        # ── Fallback：原始文字 ──
+        text = analysis.replace("```", "")
+        lines.append(text)
+
+    result = "\n".join(lines).strip()
 
     # 確保不超過 LINE 限制
-    if len(text) > 4800:
-        text = text[:4750] + "\n\n⚠️ 分析過長，已截斷。完整報告請查看日誌。"
+    if len(result) > 4800:
+        result = result[:4750] + "\n\n⚠️ 分析過長，已截斷。完整報告請查看日誌。"
 
-    return text.strip()
+    return result

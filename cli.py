@@ -197,13 +197,15 @@ def cmd_update_knowledge(args):
     # 顯示擴充知識庫狀態
     extra_files = [
         ("專案規範", config.PROJECT_SPECIFIC_FILE),
-        ("常見問題", config.COMMON_ISSUES_FILE),
-        ("審查範例", config.REVIEW_EXAMPLES_FILE),
     ]
     for name, path in extra_files:
         if path.exists():
-            size = path.stat().st_size
-            print(f"   ✅ {name}: {path.name} ({size} bytes)")
+            content = path.read_text(encoding="utf-8")
+            if "______" in content:
+                print(f"   ⚪ {name}: {path.name} (空殼模板，已跳過)")
+            else:
+                size = path.stat().st_size
+                print(f"   ✅ {name}: {path.name} ({size} bytes)")
         else:
             print(f"   ⚪ {name}: 未建立")
 
@@ -231,10 +233,8 @@ def cmd_check(args):
     print()
     files = {
         "Skill Prompt": config.UX_REVIEW_SKILL,
-        "基礎規範": config.DESIGN_RULES_FILE,
+        "核心規範": config.DESIGN_RULES_FILE,
         "專案規範": config.PROJECT_SPECIFIC_FILE,
-        "常見問題": config.COMMON_ISSUES_FILE,
-        "審查範例": config.REVIEW_EXAMPLES_FILE,
     }
     for name, path in files.items():
         status = "✅" if path.exists() else "⚪ (選用)"

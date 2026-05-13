@@ -50,8 +50,8 @@ RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "2.0"))  # 秒
 
 # ── 圖片處理 ──
-IMAGE_MAX_SIZE = 1024  # 壓縮至此長邊 px，減少 vision token
-IMAGE_QUALITY = 85     # JPEG 品質
+IMAGE_MAX_SIZE = 768   # 壓縮至此長邊 px（768 足夠 UI 審查，省 ~30% vision token）
+IMAGE_QUALITY = 75     # JPEG 品質（75 對 UI 審查已足夠）
 IMAGE_RETAIN_HOURS = 24  # 自動清理超過 N 小時的圖片
 
 # ── Server ──
@@ -62,9 +62,8 @@ UX_REVIEW_SKILL = SKILLS_DIR / "ux_review.md"
 DESIGN_RULES_FILE = KNOWLEDGE_DIR / "design_rules.md"
 
 # ── 擴充知識庫檔案（可選）──
+# common_issues 和 review_examples 已整合至 design_rules.md
 PROJECT_SPECIFIC_FILE = KNOWLEDGE_DIR / "project_specific.md"
-COMMON_ISSUES_FILE = KNOWLEDGE_DIR / "common_issues.md"
-REVIEW_EXAMPLES_FILE = KNOWLEDGE_DIR / "review_examples.md"
 
 
 def validate():

@@ -28,32 +28,27 @@ def _load_skill_prompt() -> str:
 
 
 def _load_knowledge() -> str:
-    """載入並快取所有知識庫檔案（基礎 + 擴充）"""
+    """載入並快取設計規範知識庫（精煉版，只載一個檔案）"""
     global _knowledge_cache
     if _knowledge_cache is None:
         parts = []
 
-        # 基礎設計規範（必要）
+        # 核心設計規範（必要 — 已整合所有規則）
         if config.DESIGN_RULES_FILE.exists():
             parts.append(config.DESIGN_RULES_FILE.read_text(encoding="utf-8"))
-            logger.info("已載入基礎設計規範")
+            logger.info("已載入核心設計規範")
 
-        # 專案特定規範（選用）
+        # 專案特定規範（選用 — 只有非空殼時才載入）
         if config.PROJECT_SPECIFIC_FILE.exists():
-            parts.append(config.PROJECT_SPECIFIC_FILE.read_text(encoding="utf-8"))
-            logger.info("已載入專案特定規範")
+            content = config.PROJECT_SPECIFIC_FILE.read_text(encoding="utf-8")
+            # 跳過空殼模板（檢查是否有實際填入的內容）
+            if "______" not in content and len(content.strip()) > 200:
+                parts.append(content)
+                logger.info("已載入專案特定規範")
+            else:
+                logger.info("專案特定規範為空殼模板，跳過")
 
-        # 常見問題（選用）
-        if config.COMMON_ISSUES_FILE.exists():
-            parts.append(config.COMMON_ISSUES_FILE.read_text(encoding="utf-8"))
-            logger.info("已載入常見問題庫")
-
-        # 審查範例（選用）
-        if config.REVIEW_EXAMPLES_FILE.exists():
-            parts.append(config.REVIEW_EXAMPLES_FILE.read_text(encoding="utf-8"))
-            logger.info("已載入審查範例")
-
-        _knowledge_cache = "\n\n---\n\n".join(parts)
+        _knowledge_cache = "\n\n".join(parts)
         logger.info(f"知識庫總計 {len(_knowledge_cache)} 字元")
     return _knowledge_cache
 
@@ -62,24 +57,21 @@ def _build_system_instruction() -> str:
     """
     建構 system instruction，限定 AI 角色與知識邊界
 
-    這是提升精準度的關鍵：明確告知 AI 只根據提供的規範判斷，
-    避免引入過於廣泛的外部知識。
+    精煉版：只給必要約束，不重複 AI 本來就知道的通用知識
     """
     global _system_instruction_cache
     if _system_instruction_cache is None:
         knowledge = _load_knowledge()
 
-        _system_instruction_cache = f"""你是一位專職的 UX/UI 設計審查專家。
+        _system_instruction_cache = f"""你是遊戲 UX/UI 設計審查專家。
 
-## 重要限制
-1. 你「只能」根據以下提供的設計規範進行審查判斷。
-2. 不要引入規範以外的外部知識或通用建議。
-3. 每個建議都必須對應到下方規範中的具體條目。
-4. 如果圖片中的設計沒有違反下方規範，就直接給予肯定，不要硬找問題。
-5. 回覆使用繁體中文。
-
-## 設計規範（你的唯一判斷依據）
+## 審查依據
+根據以下規範審查，每個問題必須引用具體條目：
 {knowledge}
+
+## 約束
+- 沒違規就肯定，不硬找問題
+- 繁體中文，300 字以內
 """
         logger.info(
             f"已建構 system instruction "
@@ -155,24 +147,15 @@ def analyze_image(image_path: Path, context: str = "") -> dict:
     # 2. 壓縮圖片
     img = compress_image(image_path)
 
-    # 3. 組合使用者 Prompt（Skill + Context）
-    # 注意：知識庫已移至 system_instruction，不再重複放在 prompt 中
+    # 3. 組合使用者 Prompt（精簡版 — 知識庫在 system_instruction）
     user_prompt = skill_prompt
 
     if context:
-        user_prompt += f"""
----
-## 美術補充說明
-{context}
-"""
+        user_prompt += f"\n---\n## 美術補充說明\n{context}\n"
 
-    user_prompt += """
----
-請根據系統指令中的設計規範，分析這張圖片並給出精準建議。
-每個建議必須對應到具體的規範條目。
-"""
+    user_prompt += "\n請根據系統規範分析這張圖片。"
 
-    # 4. 呼叫 AI（自動處理重試與備援）
+    # 4. 呼叫 AI（透過 ai_client，自動處理輪替、重試與備援）
     analysis_text = ai_client.analyze_with_vision(
         image=img,
         prompt=user_prompt,

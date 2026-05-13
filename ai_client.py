@@ -122,6 +122,17 @@ def _call_gemini(image: Image.Image, prompt: str, system_instruction: str = "") 
                 time.sleep(delay)
                 continue
 
+            elif "404" in error_str or "NOT_FOUND" in error_str:
+                # 模型不存在（已下架），不重試
+                logger.error(
+                    f"Gemini 模型不存在 (404): {config.GEMINI_MODEL}。"
+                    f"請更新 GEMINI_MODEL 環境變數。"
+                )
+                raise Exception(
+                    f"模型 '{config.GEMINI_MODEL}' 不存在或已下架。"
+                    f"請將 GEMINI_MODEL 改為 'gemini-2.0-flash'。"
+                ) from e
+
             elif "400" in error_str or "INVALID" in error_str:
                 # 無效請求，不重試
                 logger.error(f"Gemini 無效請求: {e}")

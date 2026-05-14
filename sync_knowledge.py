@@ -59,7 +59,13 @@ DEFAULT_NOTEBOOK_URL = os.environ.get(
 #       "file": "output_filename.md",
 #       "prompt": "萃取指令文字",
 #   }
-EXTRACT_PROMPTS = {}
+EXTRACT_PROMPTS = {
+    "東南亞市場": {
+        "url": "https://notebooklm.google.com/notebook/3a98de78-a83e-47e3-b416-8b8c4f8ea08a?authuser=6",
+        "file": "東南亞市場.md",
+        "prompt": "請根據筆記本中的所有來源資料，幫我整理「東南亞市場（包含金銀島、TADA等產品）」的完整 UI/UX 設計審查知識庫。請用以下 Markdown 結構輸出：\n\n# 東南亞市場 — 遊戲 UI/UX 審查知識庫\n## 產品簡介（列出涵蓋的遊戲/App名稱、類型、目標市場）\n## UI 風格特徵（色調、強調色、字體風格、圖標風格等）\n## 設計規範與原則（顧問建議的具體規則，例如：對稱性、顏色使用、文字重疊標準、背景明暗等）\n## 常見設計問題與退回原因\n## 審查重點清單\n\n請將所有來源中提到的具體規範、數值標準、顧問反饋重點都納入，不要遺漏。直接輸出 Markdown 內容，不需要問候語或結語。",
+    }
+}
 
 
 async def login_google(headed: bool = True):
@@ -145,6 +151,7 @@ async def extract_from_notebooklm(
                 "--no-first-run",
                 "--disable-default-apps",
             ],
+            permissions=["clipboard-read", "clipboard-write"],
             viewport={"width": 1280, "height": 900},
             locale="zh-TW",
         )
@@ -152,24 +159,30 @@ async def extract_from_notebooklm(
         page = context.pages[0] if context.pages else await context.new_page()
 
         try:
-            # 載入 NotebookLM
-            logger.info("載入 NotebookLM...")
-            await page.goto(notebook_url, wait_until="load", timeout=60000)
-            await page.wait_for_timeout(8000)  # SPA 載入需要時間
-
-            # 檢查是否需要登入
-            if "accounts.google.com" in page.url:
-                logger.error(
-                    "Google 登入已過期！"
-                    "請先執行 python sync_knowledge.py --login"
-                )
-                return False
-
-            logger.info("NotebookLM 載入完成")
+            current_url = None
 
             # 逐項萃取
             for key in extract_keys:
                 config = EXTRACT_PROMPTS[key]
+                target_url = config.get("url", notebook_url)
+                
+                # 如果該項目有專屬網址，或是尚未載入預設網址
+                if current_url != target_url:
+                    logger.info(f"載入 NotebookLM: {target_url}...")
+                    await page.goto(target_url, wait_until="load", timeout=60000)
+                    await page.wait_for_timeout(8000)  # SPA 載入需要時間
+                    
+                    # 檢查是否需要登入
+                    if "accounts.google.com" in page.url:
+                        logger.error(
+                            "Google 登入已過期！"
+                            "請先執行 python sync_knowledge.py --login"
+                        )
+                        return False
+                    
+                    current_url = target_url
+                    logger.info("NotebookLM 載入完成")
+
                 logger.info(f"正在萃取: {key} → {config['file']}")
 
                 success = await _send_and_extract(
@@ -213,6 +226,8 @@ async def _send_and_extract(page, prompt: str, output_file: str) -> bool:
 
         # 嘗試多種選擇器
         selectors = [
+            'textarea[placeholder*="提問或創作內容"]',
+            'textarea[aria-label*="提問"]',
             'textarea[aria-label*="輸入"]',
             'textarea[aria-label*="Enter"]',
             'textarea[placeholder*="輸入"]',
@@ -222,10 +237,19 @@ async def _send_and_extract(page, prompt: str, output_file: str) -> bool:
         ]
 
         for sel in selectors:
+            # 我們需要找到可見的、真正在下方的主輸入框
             locator = page.locator(sel)
-            if await locator.count() > 0:
-                input_box = locator.first
-                logger.info(f"找到輸入框: {sel}")
+            count = await locator.count()
+            for i in range(count):
+                el = locator.nth(i)
+                if await el.is_visible():
+                    # 確認它的位置在下方，或者有正確的 placeholder
+                    placeholder = await el.get_attribute("placeholder") or ""
+                    if "提問" in placeholder or "輸入" in placeholder or i == count - 1:
+                        input_box = el
+                        logger.info(f"找到輸入框: {sel} (index: {i})")
+                        break
+            if input_box:
                 break
 
         if not input_box:
@@ -254,93 +278,83 @@ async def _send_and_extract(page, prompt: str, output_file: str) -> bool:
 
         logger.info("已送出萃取指令，等待 NotebookLM 回應...")
 
-        # 4. 等待回應完成（偵測「正在輸入」指示器消失）
-        # 最長等待 120 秒
-        max_wait = 120
-        poll_interval = 3
+        # 4. 等待回應完成
+        # NotebookLM 使用 .thinking-message 表示正在生成
+        # AI 回應在 mat-card.to-user-message-card-content 中
+        max_wait = 180
+        poll_interval = 5
         waited = 0
 
-        await page.wait_for_timeout(5000)  # 先等 5 秒讓回應開始
+        await page.wait_for_timeout(10000)  # 先等 10 秒讓回應開始
 
         while waited < max_wait:
-            # 檢查是否還在生成中
-            loading_indicators = [
-                '.loading-indicator',
-                '[class*="loading"]',
-                '[class*="typing"]',
-                '[class*="generating"]',
-                '.response-loading',
-            ]
+            # 檢查是否仍在 thinking
+            thinking = page.locator('.thinking-message')
+            thinking_count = await thinking.count()
+            is_thinking = False
+            if thinking_count > 0:
+                is_thinking = await thinking.last.is_visible()
 
-            still_loading = False
-            for indicator in loading_indicators:
-                count = await page.locator(indicator).count()
-                if count > 0:
-                    is_visible = await page.locator(indicator).first.is_visible()
-                    if is_visible:
-                        still_loading = True
-                        break
+            # 取得最後一個 AI 回應的文字長度
+            ai_cards = page.locator('mat-card.to-user-message-card-content')
+            card_count = await ai_cards.count()
+            current_len = 0
+            if card_count > 0:
+                try:
+                    current_len = len(await ai_cards.last.inner_text())
+                except Exception:
+                    pass
 
-            if not still_loading:
-                # 額外等待確認已完全停止
+            if not is_thinking and current_len > 100:
+                # 多等一次確認穩定
                 await page.wait_for_timeout(3000)
-                break
+                final_len = len(await ai_cards.last.inner_text())
+                if final_len == current_len:
+                    logger.info(f"回應已完成 ({final_len} 字元)")
+                    break
 
             await page.wait_for_timeout(poll_interval * 1000)
             waited += poll_interval
-            logger.info(f"等待回應中... ({waited}/{max_wait}s)")
+            logger.info(f"等待回應中... ({waited}/{max_wait}s, thinking={is_thinking}, 字元={current_len})")
 
         # 5. 萃取最後一個回應的內容
-        # NotebookLM 的回應通常在特定容器中
-        response_selectors = [
-            '.response-container:last-child',
-            '.message-content:last-child',
-            '[class*="response"]:last-child',
-            '[class*="answer"]:last-child',
-            '.chat-message:last-child .message-body',
-        ]
-
         response_text = ""
 
-        # 方法 1：嘗試特定選擇器
-        for sel in response_selectors:
-            locator = page.locator(sel)
-            if await locator.count() > 0:
-                response_text = await locator.last.inner_text()
-                if len(response_text) > 100:  # 確保內容夠長
-                    logger.info(f"用選擇器 {sel} 取得回應 ({len(response_text)} 字元)")
-                    break
+        # 方法 1：直接從 AI 回應卡片讀取 inner_text
+        ai_cards = page.locator('mat-card.to-user-message-card-content')
+        card_count = await ai_cards.count()
+        if card_count > 0:
+            response_text = await ai_cards.last.inner_text()
+            if len(response_text) > 100:
+                logger.info(f"用 mat-card 選擇器取得回應 ({len(response_text)} 字元)")
 
-        # 方法 2：如果特定選擇器沒找到，用更通用的方式
+        # 方法 2：用「將模型回覆複製到剪貼簿」按鈕
         if len(response_text) < 100:
-            # 取得所有 chat 訊息，找最後一個 AI 回應
-            all_messages = page.locator(
-                '[class*="message"], [class*="response"], '
-                '[class*="chat-turn"], [class*="conversation-turn"]'
-            )
-            count = await all_messages.count()
-            if count > 0:
-                last_msg = all_messages.nth(count - 1)
-                response_text = await last_msg.inner_text()
-                logger.info(f"用通用選擇器取得回應 ({len(response_text)} 字元)")
+            copy_btns = page.locator('button[aria-label="將模型回覆複製到剪貼簿"]')
+            copy_count = await copy_btns.count()
+            if copy_count > 0:
+                await copy_btns.last.click()
+                await page.wait_for_timeout(1000)
+                try:
+                    response_text = await page.evaluate("navigator.clipboard.readText()")
+                    logger.info(f"用剪貼簿取得回應 ({len(response_text)} 字元)")
+                except Exception as e:
+                    logger.warning(f"剪貼簿讀取失敗: {e}")
 
-        # 方法 3：如果還是沒有，用剪貼簿
+        # 方法 3：fallback — 任何含 Copy 的按鈕
         if len(response_text) < 100:
-            # 嘗試找「複製」按鈕
             copy_btns = page.locator(
                 'button[aria-label*="複製"], '
-                'button[aria-label*="Copy"], '
-                'button[title*="複製"], '
-                'button[title*="Copy"]'
+                'button[aria-label*="Copy"]'
             )
             if await copy_btns.count() > 0:
                 await copy_btns.last.click()
                 await page.wait_for_timeout(1000)
-                # 讀取剪貼簿
-                response_text = await page.evaluate(
-                    "navigator.clipboard.readText()"
-                )
-                logger.info(f"用剪貼簿取得回應 ({len(response_text)} 字元)")
+                try:
+                    response_text = await page.evaluate("navigator.clipboard.readText()")
+                    logger.info(f"用 fallback 剪貼簿取得回應 ({len(response_text)} 字元)")
+                except Exception as e:
+                    logger.warning(f"Fallback 剪貼簿讀取失敗: {e}")
 
         if len(response_text) < 50:
             logger.error(
@@ -398,7 +412,36 @@ def _clean_response(text: str) -> str:
                     break
             break
 
-    return text
+    # 移除 NotebookLM UI 殘留文字（按鈕、引用標號等）
+    ui_artifacts = [
+        "儲存至記事", "copy_all", "thumb_up", "thumb_down",
+        "more_horiz", "keep_pin", "content_copy",
+    ]
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # 跳過純數字行（NotebookLM 的引用標號）
+        if stripped and stripped.isdigit():
+            continue
+        # 跳過 UI 殘留文字
+        if stripped in ui_artifacts:
+            continue
+        # 跳過孤立的「。」
+        if stripped == "。":
+            continue
+        cleaned_lines.append(line)
+
+    text = "\n".join(cleaned_lines)
+
+    # 把「句末換行後的獨立標點」合併回前一行
+    text = re.sub(r'\n\s*。', '。', text)
+    text = re.sub(r'\n\s*？', '？', text)
+
+    # 移除多餘空行（3行以上縮為2行）
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    return text.strip()
 
 
 def git_push(message: str = None):
@@ -497,9 +540,12 @@ async def main():
         await login_google(headed=True)
         return
 
-    # 檢查 URL
-    if not args.notebook_url:
-        print("❌ 請提供 NotebookLM 筆記本 URL")
+    # 檢查 URL（如果所選項目都有專屬網址，則不需要全域 URL）
+    extract_keys = args.only or list(EXTRACT_PROMPTS.keys())
+    needs_global_url = any("url" not in EXTRACT_PROMPTS[k] for k in extract_keys)
+
+    if needs_global_url and not args.notebook_url:
+        print("❌ 請提供預設 NotebookLM 筆記本 URL（部分項目未指定專屬網址）")
         print()
         print("設定方式（擇一）：")
         print("  1. 環境變數: NOTEBOOKLM_URL=https://notebooklm.google.com/notebook/...")

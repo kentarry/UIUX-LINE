@@ -32,6 +32,11 @@ SUPPORTED_GAMES = {
         "knowledge_file": "滿貫大亨.md",
         "aliases": ["满贯大亨", "滿貫"],
     },
+    "東南亞市場": {
+        "name": "東南亞市場",
+        "knowledge_file": "東南亞市場.md",
+        "aliases": ["東南亞", "金銀島", "TADA", "tada", "Tada"],
+    },
 }
 
 
@@ -45,16 +50,16 @@ def match_game(text: str) -> str | None:
     Returns:
         匹配到的遊戲正式名稱，或 None
     """
-    text = text.strip()
+    text = text.strip().lower()
 
     for game_name, info in SUPPORTED_GAMES.items():
         # 精確匹配遊戲名
-        if game_name in text:
+        if game_name.lower() in text:
             return game_name
 
         # 匹配別名
         for alias in info["aliases"]:
-            if alias in text:
+            if alias.lower() in text:
                 return game_name
 
     return None

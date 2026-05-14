@@ -93,6 +93,12 @@ NOTEBOOKLM_NOTEBOOKS = {
         "target_file": "design_rules.md",
         "description": "通用 UI/UX 設計審查知識（22 個設計資源來源）",
     },
+    "東南亞市場": {
+        "name": "東南亞市場",
+        "url": "https://notebooklm.google.com/notebook/3a98de78-a83e-47e3-b416-8b8c4f8ea08a?authuser=6",
+        "target_file": "東南亞市場.md",
+        "description": "東南亞市場設計規範（如金銀島、TADA）",
+    },
 }
 
 

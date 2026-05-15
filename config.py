@@ -99,6 +99,12 @@ NOTEBOOKLM_NOTEBOOKS = {
         "target_file": "東南亞市場.md",
         "description": "東南亞市場設計規範（如金銀島、TADA）",
     },
+    "競技麻將2": {
+        "name": "競技麻將2",
+        "url": NOTEBOOKLM_UIUX_URL,
+        "target_file": "競技麻將2.md",
+        "description": "競技麻將2 設計規範（台灣市場，與明星/滿貫共用 NotebookLM）",
+    },
 }
 
 

@@ -37,6 +37,11 @@ SUPPORTED_GAMES = {
         "knowledge_file": "東南亞市場.md",
         "aliases": ["東南亞", "金銀島", "TADA", "tada", "Tada"],
     },
+    "競技麻將2": {
+        "name": "競技麻將2",
+        "knowledge_file": "競技麻將2.md",
+        "aliases": ["競技麻將", "競技麻將二", "競麻2", "競麻", "競麻二"],
+    },
 }
 
 

@@ -35,7 +35,7 @@ SUPPORTED_GAMES = {
     "東南亞市場": {
         "name": "東南亞市場",
         "knowledge_file": "東南亞市場.md",
-        "aliases": ["東南亞", "金銀島", "TADA", "tada", "Tada"],
+        "aliases": ["東南亞", "南亞", "金銀島", "TADA", "tada", "Tada"],
     },
     "競技麻將2": {
         "name": "競技麻將2",

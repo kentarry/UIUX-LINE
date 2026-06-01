@@ -207,3 +207,39 @@ def get_pending_images_count() -> int:
     """取得目前待處理圖片數量"""
     with _session_lock:
         return len(_pending_images)
+
+
+def set_pending_redesign(session_id: str, prompt: str, image_path: str):
+    """暫存建議設計圖的生成提示詞與原圖路徑"""
+    with _session_lock:
+        session = _sessions.get(session_id)
+        if not session:
+            session = {
+                "game": None,
+                "context": "",
+            }
+            _sessions[session_id] = session
+        session["pending_redesign_prompt"] = prompt
+        session["pending_redesign_image_path"] = image_path
+        session["timestamp"] = time.time()
+        logger.info(f"使用者/群組 {session_id[:8]}... 暫存產圖 prompt ({len(prompt)} 字元)")
+
+
+def get_pending_redesign(session_id: str) -> tuple[str | None, str | None]:
+    """取得暫存的建議設計圖提示詞與原圖路徑"""
+    with _session_lock:
+        session = _sessions.get(session_id)
+        if not session:
+            return None, None
+        return session.get("pending_redesign_prompt"), session.get("pending_redesign_image_path")
+
+
+def clear_pending_redesign(session_id: str):
+    """清除暫存的建議設計圖資訊"""
+    with _session_lock:
+        session = _sessions.get(session_id)
+        if session:
+            session.pop("pending_redesign_prompt", None)
+            session.pop("pending_redesign_image_path", None)
+            logger.info(f"使用者/群組 {session_id[:8]}... 清除暫存產圖 prompt")
+

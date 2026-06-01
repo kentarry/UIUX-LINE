@@ -76,16 +76,38 @@ def verify_signature(body: bytes, signature: str) -> bool:
 
 def handle_text_message(text: str, reply_token: str, session_id: str, source_type: str, base_url: str = ""):
     """
-    處理文字訊息 — 辨識遊戲選擇
-
-    使用者傳送包含遊戲名稱的文字（如「這是明星3缺1」），
-    系統會記住使用者選擇的遊戲。
-    如果有暫存的待處理圖片，會自動觸發分析（省去重新貼圖）。
+    處理文字訊息 — 辨識遊戲選擇與產圖確認
     """
-    # 嘗試辨識遊戲名稱
+    clean_text = text.lower().strip()
+    pending_prompt, pending_img = session_manager.get_pending_redesign(session_id)
+
+    # 1. 檢查是否要為先前的分析產圖
+    if pending_prompt and clean_text in ["是", "要", "好", "yes", "y", "確定"]:
+        session_manager.clear_pending_redesign(session_id)
+        reply_msg = "📸 正在依據建議產生改進後的設計圖，請稍候..."
+        line_client.reply_text(reply_token, reply_msg)
+        
+        # 啟動背景執行緒進行圖片生成
+        thread = threading.Thread(
+            target=process_redesign_generation,
+            args=(session_id, pending_prompt, pending_img, base_url),
+            daemon=True
+        )
+        thread.start()
+        return
+
+    if pending_prompt and clean_text in ["否", "不用", "取消", "no", "n"]:
+        session_manager.clear_pending_redesign(session_id)
+        reply_msg = "✅ 已取消產圖。您可以繼續傳送下一張截圖進行分析。"
+        line_client.reply_text(reply_token, reply_msg)
+        return
+
+    # 2. 嘗試辨識遊戲名稱
     game_name = session_manager.match_game(text)
 
     if game_name:
+        # 切換遊戲時，清除先前待確認的產圖
+        session_manager.clear_pending_redesign(session_id)
         # 設定使用者的遊戲選擇與對話內容作為上下文
         session_manager.set_game(session_id, game_name, context=text)
         logger.info(f"使用者 {session_id[:8]}... 選擇遊戲: {game_name}")
@@ -122,6 +144,17 @@ def handle_text_message(text: str, reply_token: str, session_id: str, source_typ
             line_client.reply_text(reply_token, reply_msg)
 
     else:
+        # 如果有待確認的產圖，但輸入不是是/否，且未匹配到新遊戲
+        if pending_prompt:
+            reply_msg = (
+                "📌 偵測到您尚未決定是否要產生建議設計圖。\n\n"
+                "👉 請回覆「是」開始產生圖片\n"
+                "👉 請回覆「否」取消產圖\n\n"
+                "（如需切換至其他遊戲，請直接輸入遊戲名稱）"
+            )
+            line_client.reply_text(reply_token, reply_msg)
+            return
+
         # 未辨識到遊戲 — 顯示支援清單
         current_game, _ = session_manager.get_game(session_id)
         supported = session_manager.get_supported_games_text()
@@ -141,6 +174,26 @@ def handle_text_message(text: str, reply_token: str, session_id: str, source_typ
             )
 
         line_client.reply_text(reply_token, reply_msg)
+
+
+def process_redesign_generation(session_id: str, prompt: str, img_path: str, base_url: str):
+    """
+    背景執行緒：呼召 Imagen 3 產生設計圖並發送
+    """
+    from pathlib import Path
+    try:
+        aspect_ratio = analyzer._get_best_aspect_ratio(Path(img_path))
+        redesign_path = analyzer.generate_redesign_image(prompt, aspect_ratio)
+        if redesign_path:
+            root_url = base_url if base_url.endswith("/") else f"{base_url}/"
+            img_url = f"{root_url}images/{redesign_path.name}"
+            logger.info(f"正在向 {session_id[:8]} 推送產出的建議設計圖: {img_url}")
+            line_client.push_image(session_id, img_url, img_url)
+        else:
+            line_client.push_text(session_id, "⚠️ 建議設計圖生成失敗，請確認 API 金鑰配額與狀態。")
+    except Exception as e:
+        logger.error(f"產出建議設計圖失敗: {e}", exc_info=True)
+        line_client.push_text(session_id, f"⚠️ 建議設計圖產生失敗: {str(e)[:100]}")
 
 
 def process_pending_image(pending: dict, game_name: str, session_id: str, source_type: str, context: str = "", base_url: str = ""):
@@ -166,19 +219,15 @@ def process_pending_image(pending: dict, game_name: str, session_id: str, source
         line_client.push_text(session_id, formatted)
         logger.info(f"暫存圖片分析完成: session={session_id[:8]}..., game={game_name}")
 
-        # ── 非同步產生重新設計的建議圖片 ──
+        # ── 暫存設計圖 prompt，並詢問使用者是否要產圖 ──
         redesign_prompt = result.get("redesign_prompt", "")
-        if redesign_prompt and base_url:
-            try:
-                aspect_ratio = analyzer._get_best_aspect_ratio(image_path)
-                redesign_path = analyzer.generate_redesign_image(redesign_prompt, aspect_ratio)
-                if redesign_path:
-                    root_url = base_url if base_url.endswith("/") else f"{base_url}/"
-                    img_url = f"{root_url}images/{redesign_path.name}"
-                    logger.info(f"正在向 {session_id[:8]} 推送建議設計圖: {img_url}")
-                    line_client.push_image(session_id, img_url, img_url)
-            except Exception as img_err:
-                logger.warning(f"產生建議設計圖失敗: {img_err}")
+        if redesign_prompt:
+            session_manager.set_pending_redesign(session_id, redesign_prompt, str(image_path))
+            prompt_confirm_msg = (
+                "💡 是否需要利用 AI 產生改進後的 UI 建議設計圖供您對照？\n"
+                "👉 請回覆「是」或「否」"
+            )
+            line_client.push_text(session_id, prompt_confirm_msg)
 
     except Exception as e:
         logger.error(f"暫存圖片分析失敗: {e}", exc_info=True)
@@ -246,19 +295,15 @@ def process_image_async(message_id: str, reply_token: str, session_id: str, sour
 
         logger.info(f"回覆完成: session={session_id}, game={game_name}")
 
-        # ── 5. 非同步產生重新設計的建議圖片 ──
+        # ── 5. 暫存設計圖 prompt，並詢問使用者是否要產圖 ──
         redesign_prompt = result.get("redesign_prompt", "")
-        if redesign_prompt and base_url:
-            try:
-                aspect_ratio = analyzer._get_best_aspect_ratio(image_path)
-                redesign_path = analyzer.generate_redesign_image(redesign_prompt, aspect_ratio)
-                if redesign_path:
-                    root_url = base_url if base_url.endswith("/") else f"{base_url}/"
-                    img_url = f"{root_url}images/{redesign_path.name}"
-                    logger.info(f"正在向 {session_id[:8]} 推送建議設計圖: {img_url}")
-                    line_client.push_image(session_id, img_url, img_url)
-            except Exception as img_err:
-                logger.warning(f"產生建議設計圖失敗: {img_err}")
+        if redesign_prompt:
+            session_manager.set_pending_redesign(session_id, redesign_prompt, str(image_path))
+            prompt_confirm_msg = (
+                "💡 是否需要利用 AI 產生改進後的 UI 建議設計圖供您對照？\n"
+                "👉 請回覆「是」或「否」"
+            )
+            line_client.push_text(session_id, prompt_confirm_msg)
 
     except Exception as e:
         logger.error(f"處理圖片失敗: {e}", exc_info=True)

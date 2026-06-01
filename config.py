@@ -35,7 +35,7 @@ GOOGLE_API_KEYS = [
 if not GOOGLE_API_KEYS and GOOGLE_API_KEY:
     GOOGLE_API_KEYS = [GOOGLE_API_KEY]
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 # 已下架模型自動修正（防止 404 NOT_FOUND）
 _DEPRECATED_MODELS = {
@@ -49,9 +49,9 @@ _DEPRECATED_MODELS = {
 if GEMINI_MODEL in _DEPRECATED_MODELS:
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        f"模型 '{GEMINI_MODEL}' 已被 Google 下架，自動切換為 'gemini-2.5-pro'"
+        f"模型 '{GEMINI_MODEL}' 已被 Google 下架，自動切換為 'gemini-3.5-flash'"
     )
-    GEMINI_MODEL = "gemini-2.5-pro"
+    GEMINI_MODEL = "gemini-3.5-flash"
 
 # ── OpenRouter 備援 ──
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")

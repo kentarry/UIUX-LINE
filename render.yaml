@@ -16,6 +16,6 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+        value: gemini-3.5-flash
     healthCheckPath: /health
     plan: free

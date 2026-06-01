@@ -240,7 +240,8 @@ def analyze_image(image_path: Path, game_name: str, context: str = "") -> dict:
         "model": config.GEMINI_MODEL,
         "game": game_name,
         "timestamp": datetime.now().isoformat(),
-        "image_path": str(image_path)
+        "image_path": str(image_path),
+        "redesign_prompt": parsed.get("redesign_prompt", "")
     }
 
     # 6. 儲存分析日誌
@@ -283,7 +284,15 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
 
     if parsed and isinstance(parsed, dict):
         # ── 結構化 JSON 輸出 ──
-        suggestions = parsed.get("suggestion", [])
+        raw_suggestions = parsed.get("suggestions", parsed.get("suggestion", []))
+        
+        # 容錯處理：提取文字部分
+        suggestions = []
+        for s in raw_suggestions:
+            if isinstance(s, dict):
+                suggestions.append(s.get("text", ""))
+            else:
+                suggestions.append(str(s))
 
         if suggestions:
             # 排序保障：修正建議在前，✅ 亮點排到最後
@@ -312,3 +321,70 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
         result = result[:4750] + "\n\n⚠️ 分析過長，已截斷。完整報告請查看日誌。"
 
     return result
+
+
+def _get_best_aspect_ratio(img_path: Path) -> str:
+    """
+    根據上傳圖片的長寬比，對應到最接近的 Imagen 3 支援比例 (1:1, 3:4, 4:3, 9:16, 16:9)
+    """
+    try:
+        with Image.open(img_path) as img:
+            w, h = img.size
+            ratio = w / h
+            if ratio > 1.5:
+                return "16:9"
+            elif ratio > 1.1:
+                return "4:3"
+            elif ratio < 0.6:
+                return "9:16"
+            elif ratio < 0.9:
+                return "3:4"
+            else:
+                return "1:1"
+    except Exception as e:
+        logger.warning(f"分析圖片比例時發生錯誤: {e}")
+        return "16:9"
+
+
+def generate_redesign_image(prompt: str, aspect_ratio: str) -> Path | None:
+    """
+    使用 Google AI Studio Imagen 3 API 根據提示詞生成重新設計後的建議圖片
+    """
+    from google import genai
+    import time
+
+    if not config.GOOGLE_API_KEYS:
+        logger.warning("未設定 GOOGLE_API_KEYS，跳過產生建議設計圖。")
+        return None
+
+    # 嘗試金鑰輪替直到成功或全數嘗試完畢
+    for idx, key in enumerate(config.GOOGLE_API_KEYS):
+        try:
+            client = genai.Client(api_key=key)
+            logger.info(f"嘗試使用 Key #{idx} 呼叫 Imagen 3 (aspect_ratio={aspect_ratio})...")
+
+            result = client.models.generate_images(
+                model='imagen-3.0-generate-002',
+                prompt=prompt,
+                config=dict(
+                    number_of_images=1,
+                    output_mime_type="image/jpeg",
+                    aspect_ratio=aspect_ratio,
+                )
+            )
+
+            if result.generated_images:
+                img_bytes = result.generated_images[0].image.image_bytes
+                filename = f"redesign_{int(time.time())}.jpg"
+                filepath = config.IMAGES_DIR / filename
+                filepath.write_bytes(img_bytes)
+                logger.info(f"建議設計圖已成功生成並儲存於: {filepath.name}")
+                return filepath
+
+        except Exception as e:
+            logger.warning(f"使用 Key #{idx} 呼叫 Imagen 3 失敗: {e}")
+            continue
+
+    logger.error("所有金鑰均無法產生建議設計圖。")
+    return None
+

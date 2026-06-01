@@ -129,7 +129,7 @@ def _call_gemini(image: Image.Image, prompt: str, system_instruction: str = "") 
                 )
                 raise Exception(
                     f"模型 '{config.GEMINI_MODEL}' 不存在或已下架。"
-                    f"請將 GEMINI_MODEL 改為 'gemini-2.0-flash'。"
+                    f"請將 GEMINI_MODEL 改為 'gemini-3.5-flash'。"
                 ) from e
 
             elif "400" in error_str or "INVALID" in error_str:

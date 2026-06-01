@@ -5,6 +5,7 @@ LINE 美術圖審查工具 — 使用者工作階段管理
 import time
 import threading
 import logging
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def match_game(text: str) -> str | None:
     Returns:
         匹配到的遊戲正式名稱，或 None
     """
-    text = text.strip().lower()
+    text = unicodedata.normalize('NFKC', text).strip().lower()
 
     for game_name, info in SUPPORTED_GAMES.items():
         # 精確匹配遊戲名

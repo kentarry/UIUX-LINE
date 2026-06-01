@@ -27,22 +27,26 @@
 ## 輸出格式（Output Requirement）
 ⚠️ **【極度重要】**：僅允許回傳純 JSON 格式字串，**絕對不可**包含 ` ```json ` 這樣的 markdown 標記，也不要有任何開頭/結尾的對話文字。
 
-JSON 物件需包含：  
-"suggestion": 字串陣列 (Array of Strings)，有多少需要改善的部分就提出多少點，不設數量限制，每點皆須具體且精簡。
-**每條建議的格式**：標籤獨立一行，內容換行呈現。在 JSON 字串中使用 `\n` 換行，格式為 `"[標籤]\n建議內容"`。
-⭐ **完美設計處理**：如果設計極度優秀、無可挑剔，不要硬湊缺點。回傳 1-2 點專業肯定，格式為 `"[✅ 亮點]\n肯定內容"`。
-
-⚠️ **【排序規則】**：陣列中的項目必須依照以下順序排列：
-  1. **需修正的建議在前**（`[直覺操作]`、`[故事沉浸]`、`[視覺品質]` 等標籤）
-  2. **亮點在後**（`[✅ 亮點]` 標籤必須排在陣列最末端）
-  絕對不可將亮點穿插在修正建議之間。
+JSON 物件需包含以下欄位：
+1. "suggestion": 字串陣列 (Array of Strings)，有多少需要改善的部分就提出多少點，不設數量限制，每點皆須具體且精簡。
+   **每條建議的格式**：標籤獨立一行，內容換行呈現。在 JSON 字串中使用 `\n` 換行，格式為 `"[標籤]\n建議內容"`。
+   ⭐ **完美設計處理**：如果設計極度優秀、無可挑剔，不要硬湊缺點。回傳 1-2 點專業肯定，格式為 `"[✅ 亮點]\n肯定內容"`。
+   ⚠️ **【排序規則】**：陣列中的項目必須依照以下順序排列：
+     - **需修正的建議在前**（`[直覺操作]`、`[故事沉浸]`、`[視覺品質]` 等標籤）
+     - **亮點在後**（`[✅ 亮點]` 標籤必須排在陣列最末端）
+2. "redesign_prompt": 一個字串 (String)。請用「英文」寫出一段給圖片生成 AI (Imagen 3) 的詳細提示詞，用來描繪依據你的所有修改建議重新設計調整後的 UI 畫面。
+   ⚠️ **【特別重要：嚴禁隨意生成】**：為了確保產出的圖片與使用者傳送的原始畫面高度相關，而不是隨機無關的 UI，提示詞必須包含以下三個部分：
+   - **原始畫面描述 (Original Context)**：精準描述原圖的視覺主體、主題風格、色彩計畫與排版結構（例如：畫面中央的大型中國風木質卡片、右側帶有旗袍女性立繪、上方帶有金黃色的「明星3缺1」書法體 Logo 等）。
+   - **具體修改實施 (Specific Improvements)**：將你提出的所有 suggestion 轉譯成具體的視覺修正描述（例如：原本被壓縮拉伸的右側立繪已修正回正確的 4:3 比例、原本過小的按鈕已調整為 44px 的高對比金邊按鈕、原本雜亂的元素間距已對齊並留出 12px 的間隔）。
+   - **高質感細節 (High-fidelity Details)**：加入高水準的 UI/UX 設計細節與品質關鍵字（例如：game UI mockup, high contrast text, professional layout, polished gold details, 4k, crisp, modern mobile game interface）。
+   - 請直接給出 prompt 內容，不可包裝在 markdown 中。
 
 範例：
 {
   "suggestion": [
     "[直覺操作]\n按鈕高度建議調整至至少 44px 以符合觸控熱區規範，提升點擊成功率。",
     "[故事沉浸]\n背景與 UI 邊框可增加金屬磨損細節，強化科幻風格的沉浸感。",
-    "[視覺品質]\n右側角色立繪寬度疑似被壓縮，建議確認原圖比例是否正確。",
-    "[✅ 亮點]\n畫面佈局主次分明，透過放大、外發光等視覺效果，成功將玩家注意力聚焦於核心操作區塊。"
-  ]
+    "[視覺品質]\n右側角色立繪寬度疑似被壓縮，建議確認原圖比例是否正確。"
+  ],
+  "redesign_prompt": "A professional game UI mockup of 明星3缺1 login screen, preserving the original Chinese wooden frame layout. The character portrait on the right is corrected to its normal aspect ratio. The bottom buttons are redesigned as high-contrast gold buttons with at least 44px height for touch safety. The background wood texture has polished metal trim details. Balanced layout, clean typography, 4k, high fidelity"
 }

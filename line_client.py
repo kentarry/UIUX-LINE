@@ -6,6 +6,9 @@ import requests
 import config
 from pathlib import Path
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def download_image(message_id: str) -> Path:
@@ -66,8 +69,15 @@ def reply_text(reply_token: str, text: str) -> bool:
         ]
     }
     
-    resp = requests.post(url, headers=headers, json=payload, timeout=10)
-    return resp.status_code == 200
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        if resp.status_code != 200:
+            logger.error(f"LINE API reply failed (HTTP {resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"LINE API reply exception: {e}", exc_info=True)
+        return False
 
 
 def push_text(user_id: str, text: str) -> bool:
@@ -100,8 +110,75 @@ def push_text(user_id: str, text: str) -> bool:
         ]
     }
     
-    resp = requests.post(url, headers=headers, json=payload, timeout=10)
-    return resp.status_code == 200
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        if resp.status_code != 200:
+            logger.error(f"LINE API push failed (HTTP {resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"LINE API push exception: {e}", exc_info=True)
+        return False
+
+
+def reply_image(reply_token: str, original_url: str, preview_url: str) -> bool:
+    """
+    用 Reply API 回覆圖片訊息
+    """
+    url = "https://api.line.me/v2/bot/message/reply"
+    headers = {
+        "Authorization": f"Bearer {config.LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "image",
+                "originalContentUrl": original_url,
+                "previewImageUrl": preview_url
+            }
+        ]
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        if resp.status_code != 200:
+            logger.error(f"LINE API reply_image failed (HTTP {resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"LINE API reply_image exception: {e}", exc_info=True)
+        return False
+
+
+def push_image(user_id: str, original_url: str, preview_url: str) -> bool:
+    """
+    用 Push API 推送圖片訊息
+    """
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Authorization": f"Bearer {config.LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "to": user_id,
+        "messages": [
+            {
+                "type": "image",
+                "originalContentUrl": original_url,
+                "previewImageUrl": preview_url
+            }
+        ]
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        if resp.status_code != 200:
+            logger.error(f"LINE API push_image failed (HTTP {resp.status_code}): {resp.text}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"LINE API push_image exception: {e}", exc_info=True)
+        return False
 
 
 def get_profile(user_id: str) -> dict:

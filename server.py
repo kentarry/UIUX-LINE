@@ -74,7 +74,7 @@ def verify_signature(body: bytes, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-def handle_text_message(text: str, reply_token: str, user_id: str, source_type: str):
+def handle_text_message(text: str, reply_token: str, session_id: str, source_type: str, base_url: str = ""):
     """
     處理文字訊息 — 辨識遊戲選擇
 
@@ -87,16 +87,16 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
 
     if game_name:
         # 設定使用者的遊戲選擇與對話內容作為上下文
-        session_manager.set_game(user_id, game_name, context=text)
-        logger.info(f"使用者 {user_id[:8]}... 選擇遊戲: {game_name}")
+        session_manager.set_game(session_id, game_name, context=text)
+        logger.info(f"使用者 {session_id[:8]}... 選擇遊戲: {game_name}")
 
         # 檢查是否有暫存的待處理圖片
-        pending = session_manager.get_pending_image(user_id)
+        pending = session_manager.get_pending_image(session_id)
 
         if pending:
             # 有待處理圖片 → 自動觸發分析（省 token：只在確認遊戲後才呼叫 AI）
             logger.info(
-                f"使用者 {user_id[:8]}... 有待處理圖片，自動觸發分析: "
+                f"使用者 {session_id[:8]}... 有待處理圖片，自動觸發分析: "
                 f"message_id={pending['message_id']}"
             )
             reply_msg = (
@@ -109,7 +109,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
             from pathlib import Path
             thread = threading.Thread(
                 target=process_pending_image,
-                args=(pending, game_name, user_id, source_type, text),
+                args=(pending, game_name, session_id, source_type, text, base_url),
                 daemon=True
             )
             thread.start()
@@ -123,7 +123,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
 
     else:
         # 未辨識到遊戲 — 顯示支援清單
-        current_game, _ = session_manager.get_game(user_id)
+        current_game, _ = session_manager.get_game(session_id)
         supported = session_manager.get_supported_games_text()
 
         if current_game:
@@ -143,7 +143,7 @@ def handle_text_message(text: str, reply_token: str, user_id: str, source_type: 
         line_client.reply_text(reply_token, reply_msg)
 
 
-def process_pending_image(pending: dict, game_name: str, user_id: str, source_type: str, context: str = ""):
+def process_pending_image(pending: dict, game_name: str, session_id: str, source_type: str, context: str = "", base_url: str = ""):
     """
     處理暫存的待處理圖片（使用者先貼圖、後選遊戲時觸發）
 
@@ -155,7 +155,7 @@ def process_pending_image(pending: dict, game_name: str, user_id: str, source_ty
         image_path = Path(pending["image_path"])
         if not image_path.exists():
             logger.error(f"暫存圖片不存在: {image_path}")
-            line_client.push_text(user_id, "⚠️ 暫存圖片已過期，請重新傳送截圖。")
+            line_client.push_text(session_id, "⚠️ 暫存圖片已過期，請重新傳送截圖。")
             return
 
         logger.info(f"開始分析暫存圖片: {image_path.name}, game={game_name}")
@@ -163,21 +163,33 @@ def process_pending_image(pending: dict, game_name: str, user_id: str, source_ty
         result = analyzer.analyze_image(image_path, game_name=game_name, context=context)
         formatted = analyzer.format_for_line(result["analysis"], game_name=game_name, parsed=result.get("parsed"))
 
-        if source_type == "user":
-            line_client.push_text(user_id, formatted)
-        logger.info(f"暫存圖片分析完成: user={user_id[:8]}..., game={game_name}")
+        line_client.push_text(session_id, formatted)
+        logger.info(f"暫存圖片分析完成: session={session_id[:8]}..., game={game_name}")
+
+        # ── 非同步產生重新設計的建議圖片 ──
+        redesign_prompt = result.get("redesign_prompt", "")
+        if redesign_prompt and base_url:
+            try:
+                aspect_ratio = analyzer._get_best_aspect_ratio(image_path)
+                redesign_path = analyzer.generate_redesign_image(redesign_prompt, aspect_ratio)
+                if redesign_path:
+                    root_url = base_url if base_url.endswith("/") else f"{base_url}/"
+                    img_url = f"{root_url}images/{redesign_path.name}"
+                    logger.info(f"正在向 {session_id[:8]} 推送建議設計圖: {img_url}")
+                    line_client.push_image(session_id, img_url, img_url)
+            except Exception as img_err:
+                logger.warning(f"產生建議設計圖失敗: {img_err}")
 
     except Exception as e:
         logger.error(f"暫存圖片分析失敗: {e}", exc_info=True)
         error_msg = f"⚠️ 圖片分析失敗，請重新傳送截圖。\n錯誤: {str(e)[:100]}"
         try:
-            if source_type == "user":
-                line_client.push_text(user_id, error_msg)
+            line_client.push_text(session_id, error_msg)
         except Exception:
             pass
 
 
-def process_image_async(message_id: str, reply_token: str, user_id: str, source_type: str):
+def process_image_async(message_id: str, reply_token: str, session_id: str, source_type: str, base_url: str = ""):
     """
     非同步處理圖片（避免 webhook timeout）
 
@@ -187,14 +199,14 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
     """
     try:
         # 1. 檢查使用者是否已選擇遊戲
-        game_name, context = session_manager.get_game(user_id)
+        game_name, context = session_manager.get_game(session_id)
 
         if not game_name:
             # ── 尚未選遊戲：只下載暫存，不呼叫 AI（節省 token）──
-            logger.info(f"使用者 {user_id[:8]}... 尚未選遊戲，暫存圖片: {message_id}")
+            logger.info(f"工作階段 {session_id[:8]}... 尚未選遊戲，暫存圖片: {message_id}")
 
             image_path = line_client.download_image(message_id)
-            session_manager.set_pending_image(user_id, image_path, message_id)
+            session_manager.set_pending_image(session_id, image_path, message_id)
 
             supported = session_manager.get_supported_games_text()
             prompt_msg = (
@@ -204,8 +216,7 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
                 f"💡 直接輸入遊戲名稱即可（例如：明星3缺1）"
             )
             if not line_client.reply_text(reply_token, prompt_msg):
-                if source_type == "user":
-                    line_client.push_text(user_id, prompt_msg)
+                line_client.push_text(session_id, prompt_msg)
             return
 
         logger.info(f"開始處理圖片: message_id={message_id}, game={game_name}")
@@ -229,14 +240,25 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
         success = line_client.reply_text(reply_token, formatted)
 
         if not success:
-            # reply_token 過期，改用 push（僅限 1 對 1）
+            # reply_token 已過期，改用 push 訊息
             logger.warning("reply_token 已過期，嘗試 push 訊息")
-            if source_type == "user":
-                line_client.push_text(user_id, formatted)
-            else:
-                logger.error("群組訊息無法使用 push，reply_token 已過期")
+            line_client.push_text(session_id, formatted)
 
-        logger.info(f"回覆完成: user={user_id}, game={game_name}")
+        logger.info(f"回覆完成: session={session_id}, game={game_name}")
+
+        # ── 5. 非同步產生重新設計的建議圖片 ──
+        redesign_prompt = result.get("redesign_prompt", "")
+        if redesign_prompt and base_url:
+            try:
+                aspect_ratio = analyzer._get_best_aspect_ratio(image_path)
+                redesign_path = analyzer.generate_redesign_image(redesign_prompt, aspect_ratio)
+                if redesign_path:
+                    root_url = base_url if base_url.endswith("/") else f"{base_url}/"
+                    img_url = f"{root_url}images/{redesign_path.name}"
+                    logger.info(f"正在向 {session_id[:8]} 推送建議設計圖: {img_url}")
+                    line_client.push_image(session_id, img_url, img_url)
+            except Exception as img_err:
+                logger.warning(f"產生建議設計圖失敗: {img_err}")
 
     except Exception as e:
         logger.error(f"處理圖片失敗: {e}", exc_info=True)
@@ -257,8 +279,7 @@ def process_image_async(message_id: str, reply_token: str, user_id: str, source_
         try:
             # 先嘗試 reply，失敗則 push
             if not line_client.reply_text(reply_token, error_msg):
-                if source_type == "user":
-                    line_client.push_text(user_id, error_msg)
+                line_client.push_text(session_id, error_msg)
         except Exception:
             pass
 
@@ -291,14 +312,18 @@ def callback():
         source_type = source.get("type", "user")
         user_id = source.get("userId", "")
 
+        # 決定工作階段 ID: 優先使用群組或聊天室 ID，以利團隊協作與群組分析推送；個人聊天則用 userId
+        session_id = source.get("groupId") or source.get("roomId") or user_id or ""
+
         # ── 處理文字訊息（遊戲選擇）──
         if message_type == "text":
             text = message.get("text", "").strip()
             if text:
                 logger.info(
-                    f"收到文字: user={user_id}, text={text[:50]}"
+                    f"收到文字: session={session_id}, text={text[:50]}"
                 )
-                handle_text_message(text, reply_token, user_id, source_type)
+                base_url = request.url_root
+                handle_text_message(text, reply_token, session_id, source_type, base_url)
             continue
 
         # ── 處理圖片訊息 ──
@@ -307,18 +332,26 @@ def callback():
 
             logger.info(
                 f"收到圖片: message_id={message_id}, "
-                f"source={source_type}, user={user_id}"
+                f"source={source_type}, session={session_id}"
             )
 
+            base_url = request.url_root
             # 非同步處理（避免 webhook timeout）
             thread = threading.Thread(
                 target=process_image_async,
-                args=(message_id, reply_token, user_id, source_type),
+                args=(message_id, reply_token, session_id, source_type, base_url),
                 daemon=True
             )
             thread.start()
 
     return "OK", 200
+
+
+@app.route("/images/<path:filename>", methods=["GET"])
+def serve_image(filename):
+    """提供圖片檔案靜態存取（供 LINE 圖片訊息載入）"""
+    from flask import send_from_directory
+    return send_from_directory(config.IMAGES_DIR, filename)
 
 
 @app.route("/health", methods=["GET"])

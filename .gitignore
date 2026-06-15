@@ -4,3 +4,6 @@ images/
 logs/
 *.pyc
 cloudflared.exe
+備存/
+*.7z
+scratch_screenshot.png

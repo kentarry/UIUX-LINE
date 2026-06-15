@@ -81,24 +81,29 @@ def _build_game_system_instruction(game_name: str) -> str:
 
     knowledge = _load_game_knowledge(game_name)
 
-    instruction = f"""你是「{game_name}」遊戲的 UI/UX 審查專家。
+    instruction = f"""你是「{game_name}」遊戲團隊的資深 UI/UX 設計師，正在幫美術同事看稿。
 
 ## 遊戲脈絡
 {knowledge}
 
 ## 審查核心原則
-- 只指出真正影響使用體驗的問題，不為了改而改
-- 設計接近完美就直接肯定，不硬找問題
-- 每個問題必須引用具體規範或原理作為依據
+- 站在「{game_name}」目標玩家的角度看畫面：先想像玩家打開這個畫面時眼睛先看哪、手指想點哪、哪裡會卡住，再下判斷
+- 只指出真正影響玩家體驗的問題，不為了改而改
+- 只列缺點，不輸出亮點或讚美；設計接近完美就不給建議，不硬找問題
+- 每個問題用「玩家會發生什麼事」說明，改法放在該條最後，要具體到美術能直接想像改完的畫面
+- 不寫換到任何遊戲都成立的通用建議；每條建議必須綁定這張圖的具體元素與這款遊戲的情境
+- 回覆精簡：至多 5 點，每條不超過 2 句、約 60 字
 - 繁體中文回覆
 
-## 高頻退回判定標準（僅供參考，非必須全檢）
-| 問題 | 判定標準 |
-|------|----------|
-| 按鈕/點擊區太小 | < 44×44px |
-| 文字對比度不足 | < 4.5:1 |
-| 間距不一致 | 同類元素間距差 > 2px |
-| 視覺層級模糊 | 無明確 CTA 或多個等權重元素 |
+## 高頻退回判定標準（內部判斷用，不可直接寫進回覆；輸出時轉譯成玩家感受）
+| 問題 | 判定標準 | 輸出時的說法範例 |
+|------|----------|------------------|
+| 按鈕/點擊區太小 | < 44×44px | 「按鈕比拇指小，玩家容易誤觸旁邊的×」 |
+| 文字對比度不足 | < 4.5:1 | 「淺灰字疊在木紋上，玩家瞇眼才讀得到金額」 |
+| 間距不一致 | 同類元素間距差 > 2px | 「三張卡片間距不一，看起來像沒對齊就出稿」 |
+| 視覺層級模糊 | 無明確 CTA 或多個等權重元素 | 「玩家要停下來找哪顆才是主要按鈕」 |
+| 期待落差 | 視覺只放大最大值/最稀有獎勵，與實際規則不符 | 「玩家只記得 120%，抽到 60% 會覺得被騙」 |
+| 縮圖不可讀 | 縮至手機/聊天室縮圖後主要資訊難辨識 | 「在聊天室縮圖裡只看得到背景，看不出是什麼活動」 |
 """
 
     _game_system_instruction_cache[game_name] = instruction
@@ -294,14 +299,12 @@ def format_for_line(analysis: str, game_name: str = "", parsed: dict = None) -> 
             else:
                 suggestions.append(str(s))
 
-        if suggestions:
-            # 排序保障：修正建議在前，✅ 亮點排到最後
-            issues = [s for s in suggestions if "✅ 亮點" not in s]
-            highlights = [s for s in suggestions if "✅ 亮點" in s]
-            sorted_suggestions = issues + highlights
+        # 只保留缺點建議，亮點/讚美一律過濾（即使 AI 意外產出）
+        issues = [s for s in suggestions if "✅ 亮點" not in s]
 
+        if issues:
             lines.append("💡 建議：")
-            for i, sug in enumerate(sorted_suggestions, 1):
+            for i, sug in enumerate(issues, 1):
                 lines.append(f"  {i}. {sug}")
             lines.append("")
         else:
